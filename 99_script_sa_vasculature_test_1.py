@@ -1,48 +1,17 @@
 #!/usr/bin/env python
 
-import datetime
-import pickle
-import sys
-import time
-
-import igraph
-from igraph import layout
-from igraph.drawing import graph
 import numpy as np
-import pandas as pd
-
+import sys
+from source.import_graph import import_sa_graph_from_pkl, check_graph_attributes_complete_nwgen
+from source.graph_manipulation_hardcoded import change_graph_attributes_casespecific_c57bl6_1, \
+    change_graph_attributes_casespecific_c57bl6_2, change_graph_attributes_casespecific_balbc_1, \
+    change_graph_attributes_casespecific_balbc_2, add_connection2_cow_c57bl6_1, add_connection2_cow_c57bl6_2, \
+    add_connection2_cow_balbc_1, add_connection2_cow_balbc_2
+from source.processing_spatial import do_DA_density_refinement, write_voronoi_polygons_DAs_to_file, add_AVs, \
+    write_AV_locs_to_file
+from source.network_visz import visualize_DA_AV_roots_with_polygons, plot_pial_vasculature
+from source.graph_manipulation import connect_all_new_DAs_starting_pt_to_graph, add_AV_starting_pts_to_graph
 from source.export_graph import write_vtp
-from source.graph_manipulation import (
-    add_AV_starting_pts_to_graph,
-    connect_all_new_DAs_starting_pt_to_graph,
-)
-from source.graph_manipulation_hardcoded import (
-    add_connection2_cow_balbc_1,
-    add_connection2_cow_balbc_2,
-    add_connection2_cow_c57bl6_1,
-    add_connection2_cow_c57bl6_2,
-    add_connection2_cow_test_1,
-    add_connection2_cow_test_1,
-    change_graph_attributes_casespecific_balbc_1,
-    change_graph_attributes_casespecific_balbc_2,
-    change_graph_attributes_casespecific_c57bl6_1,
-    change_graph_attributes_casespecific_c57bl6_2,
-    change_graph_attributes_casespecific_test_1,
-)
-from source.import_graph import (
-    check_graph_attributes_complete_nwgen,
-    import_sa_graph_from_pkl,
-)
-from source.network_visz import (
-    plot_pial_vasculature,
-    visualize_DA_AV_roots_with_polygons,
-)
-from source.processing_spatial import (
-    add_AVs,
-    do_DA_density_refinement,
-    write_AV_locs_to_file,
-    write_voronoi_polygons_DAs_to_file,
-)
 
 ##################################################################
 # Import a surface artery network from two python dictionaries,
@@ -55,8 +24,15 @@ from source.processing_spatial import (
 #                                                 'surface_artery_networks/C57BL6_1/verticesDict.pkl',
 #                                                 adj_attr_name='connectivity', delete_tortiosity=True)
 
-vs_data = pd.read_csv("../data/test 1/vertices.csv")
-es_data = pd.read_csv("../data/test 1/edges.csv")
+import time
+import datetime
+
+import pandas as pd
+
+import igraph
+
+vs_data = pd.read_csv("../../data/test 1/vertices.csv")
+es_data = pd.read_csv("../../data/test 1/edges.csv")
 
 g = igraph.Graph((es_data[["from", "to"]] - 1).to_numpy().tolist())
 
@@ -78,7 +54,7 @@ g.vs['COW_in'] = np.zeros(g.vcount(),dtype=int)
 
 g.es['is_stroke'] = es_data.is_stroke
 g.es["diameter"] = es_data.diameter
-g.es["isCollateral"] = es_data.isCollateral
+g.es["is_collateral"] = es_data.is_collateral
 g.es['type'] = es_data.type
 g.es["added_manually"] = es_data.added_manually
 
@@ -88,6 +64,7 @@ g.es["diam_pre_exp"] = es_data.diam_pre_exp
 g.es["diam_post_exp"] = es_data.diam_post_exp
 g.es["vRBC_pre_exp"] = es_data.vRBC_pre_exp
 g.es["vRBC_post_exp"] = es_data.vRBC_post_exp
+g.es["vRBC_pre_larger10"] = es_data.vRBC_pre_larger10
 
 
 lengths = []
@@ -99,18 +76,32 @@ for e in g.es:
 g.es["length"] = lengths
 
 
-igraph.plot(
-    g,
-    layout=[arr[:2] for arr in g.vs["coords"]],
-    vertex_size=4,
-    vertex_color="lightblue",
-    edge_color="gray",
-    bbox=(600, 600),
-    margin=30
-)
+# igraph.plot(
+#     g,
+#     layout=[arr[:2] for arr in g.vs["coords"]],
+#     vertex_size=4,
+#     vertex_color="lightblue",
+#     edge_color="gray",
+#     bbox=(600, 600),
+#     margin=30
+# )
 
 graph_surface_artery = g
 
+# Network C57BL/6_II
+# graph_surface_artery = import_sa_graph_from_pkl('surface_artery_networks/C57BL6_2/edgesDict.pkl',
+#                                                 'surface_artery_networks/C57BL6_2/verticesDict.pkl',
+#                                                 adj_attr_name='connectivity', delete_tortiosity=True)
+
+# Network BALB/C_I
+# graph_surface_artery = import_sa_graph_from_pkl('surface_artery_networks/BALBC_1/edgesDict.pkl',
+#                                                 'surface_artery_networks/BALBC_1/verticesDict.pkl',
+#                                                 adj_attr_name='connectivity', delete_tortiosity=True)
+
+# Network BALB/C_II
+# graph_surface_artery = import_sa_graph_from_pkl('surface_artery_networks/BALBC_2/edgesDict.pkl',
+#                                                 'surface_artery_networks/BALBC_2/verticesDict.pkl',
+#                                                 adj_attr_name='connectivity', delete_tortiosity=True)
 
 ##################################################################
 # Network specific modifications, i.e., to make sure that all graph
@@ -120,7 +111,7 @@ graph_surface_artery = g
 ##################################################################
 
 # Network C57BL/6_I
-graph_surface_artery = change_graph_attributes_casespecific_test_1(graph_surface_artery)
+# graph_surface_artery = change_graph_attributes_casespecific_c57bl6_1(graph_surface_artery)
 
 # Network C57BL/6_II
 # graph_surface_artery = change_graph_attributes_casespecific_c57bl6_2(graph_surface_artery)
@@ -139,8 +130,8 @@ graph_surface_artery = change_graph_attributes_casespecific_test_1(graph_surface
 if not check_graph_attributes_complete_nwgen(graph_surface_artery):
     sys.exit()
 
-print('Graph summary after SA import')
-print(graph_surface_artery.summary())
+print 'Graph summary after SA import'
+print graph_surface_artery.summary()
 
 ##################################################################
 # Add additional surface arteries (SA to CoW) to connect MCA_in
@@ -149,7 +140,7 @@ print(graph_surface_artery.summary())
 ##################################################################
 
 # Network C57BL/6_I
-graph_surface_artery = add_connection2_cow_test_1(graph_surface_artery)
+# graph_surface_artery = add_connection2_cow_c57bl6_1(graph_surface_artery)
 
 # Network C57BL/6_II
 # graph_surface_artery = add_connection2_cow_c57bl6_2(graph_surface_artery)
@@ -223,7 +214,7 @@ graph_surface_artery, is_valid = connect_all_new_DAs_starting_pt_to_graph(graph_
 
 # Network checks
 if not is_valid:
-    print("Error: Could not connect all DAs due to error")
+    print "Error: Could not connect all DAs due to error"
     sys.exit()
 if not check_graph_attributes_complete_nwgen(graph_surface_artery):
     sys.exit()
@@ -231,7 +222,7 @@ if not check_graph_attributes_complete_nwgen(graph_surface_artery):
 # Visualization
 x = np.array(graph_surface_artery.vs["coords"])[:, 0]
 y = np.array(graph_surface_artery.vs["coords"])[:, 1]
-adjacency_list = np.array(graph_surface_artery.get_edgelist(), dtype=int)
+adjacency_list = np.array(graph_surface_artery.get_edgelist(), dtype=np.int)
 diameters = np.array(graph_surface_artery.es["diameter"])
 is_collateral = np.array(graph_surface_artery.es["is_collateral"]) > 0
 is_added_manually = np.array(graph_surface_artery.es["added_manually"]) > 0
@@ -263,7 +254,5 @@ if not check_graph_attributes_complete_nwgen(graph_surface_artery):
 # - vtp file, can be opened with paraview and used for the visualization of the network
 ##################################################################
 
-igraph.plot(graph_surface_artery, layout=[arr[:2] for arr in graph_surface_artery.vs["coords"]])
-
-graph_surface_artery.write_pickle('nw_output/graph_gen_process/a1_test_1_surface_network.pkl')
-write_vtp(graph_surface_artery, 'nw_output/graph_gen_process/a1_test_1_surface_network.vtp', coordinatesKey='coords')
+graph_surface_artery.write_pickle('nw_output/graph_gen_process/a1_c57bl6_1_surface_network.pkl')
+write_vtp(graph_surface_artery, 'nw_output/graph_gen_process/a1_c57bl6_1_surface_network.vtp', coordinatesKey='coords')

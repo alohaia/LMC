@@ -1,11 +1,10 @@
-import igraph
-from matplotlib.collections import LineCollection
-import matplotlib.patches as patches
-import matplotlib.pyplot as plt
-from matplotlib.ticker import AutoMinorLocator, MultipleLocator
 import numpy as np
 import pandas as pd
 import seaborn as sns
+import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
+from matplotlib.ticker import (AutoMinorLocator, MultipleLocator)
+import matplotlib.patches as patches
 
 
 def visualize_DAs_refinement(xy_DA_roots, is_initial_DA, vor, is_ghost_pt, show_areas=False,
@@ -161,7 +160,7 @@ def visualize_watershed_line(xy_DAroots, is_DAroot_MCA, is_DAroot_ACA, vor, is_g
     # vessel segments (PAs incl. collaterals)
     is_PA = np.array(graph.es['type']) <= 0
 
-    adjacency_list = np.array(graph.get_edgelist(), dtype=int)[is_PA]
+    adjacency_list = np.array(graph.get_edgelist(), dtype=np.int)[is_PA]
     x = np.array(graph.vs["coords"])[:, 0]
     y = np.array(graph.vs["coords"])[:, 1]
 

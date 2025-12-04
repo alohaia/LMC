@@ -1,17 +1,12 @@
 import numpy as np
-from scipy.spatial import ConvexHull, Voronoi
+from scipy.spatial import Voronoi, ConvexHull
 from shapely.geometry import Point, Polygon
-
-from .network_visz import (
-    visualize_DA_distribution,
-    visualize_DAs_refinement,
-    visualize_watershed_line,
-)
+from .network_visz import visualize_DAs_refinement, visualize_DA_distribution, visualize_watershed_line
 
 
 def do_DA_density_refinement(xy_DA_roots, max_nr_of_new_DAs=50,
                              ghp_mode=2, ghp_frame_width=800, ghp_hull_meshsize=500, ghp_shape_simplifier=10,
-                             sample_min_DA_distance=150., newDA_prior_target_density=4.0, max_nr_of_tries=1000,
+                             sample_min_DA_distance=150., newDA_prior_target_density=4, max_nr_of_tries=1000,
                              write_refinement_steps_to_file=False, show_MCA_ACA_root=False,
                              write_init_final_distribution=False,
                              xy_MCA_root=np.array([]), xy_ACA_root=np.array([]),
@@ -33,7 +28,7 @@ def do_DA_density_refinement(xy_DA_roots, max_nr_of_new_DAs=50,
 
     # vor = vor_initial
 
-    for refinementstep in range(max_nr_of_new_DAs+1):
+    for refinementstep in xrange(max_nr_of_new_DAs+1):
 
         vor, is_ghost_pt = do_voronoi_tessalation(xy_DA_roots, use_ghost_points=True,
                                                   xy_ghost_points=xy_ghost_points)  #
@@ -83,7 +78,7 @@ def do_DA_density_refinement(xy_DA_roots, max_nr_of_new_DAs=50,
                                           filepath_density=filepath_folder + "density_distr_refinement_nr_" + str(refinementstep) + ".png",
                                           filepath_area=filepath_folder + "area_distr_refinement_nr_" + str(refinementstep) + ".png")
 
-            print("No valid new point found at refinement step", refinementstep)
+            print "No valid new point found at refinement step", refinementstep
             break
 
     if return_voronoi_polygon_vs_coords:
@@ -103,13 +98,13 @@ def do_DA_density_refinement(xy_DA_roots, max_nr_of_new_DAs=50,
 def get_ghost_points_for_voronoi_boundary(xy_points, ghostpoint_mode=0, frame_width=800, convex_hull_meshsize=200,
                                           shape_simplifier=10):
     if ghostpoint_mode == 0:
-        print("Ghost point mode 0: Do not create any ghost points.")
+        print "Ghost point mode 0: Do not create any ghost points."
         xy_ghost_points = np.array([[]]).reshape(-1, 2)
 
     elif ghostpoint_mode == 1:
-        print("Ghost point mode 1: Based on convex hull with constant frame width.")
-        print("Frame width =", frame_width)
-        print("Meshsize of boundary hull =", convex_hull_meshsize)
+        print "Ghost point mode 1: Based on convex hull with constant frame width."
+        print "Frame width =", frame_width
+        print "Meshsize of boundary hull =", convex_hull_meshsize
 
         hull = ConvexHull(xy_points)
 
@@ -118,7 +113,7 @@ def get_ghost_points_for_voronoi_boundary(xy_points, ghostpoint_mode=0, frame_wi
 
         xy_frame_corner_pts = np.array([])
 
-        for i in range(nr_of_hull_vs):
+        for i in xrange(nr_of_hull_vs):
             xy_vs_1 = xy_points[vertices_hull_ccw[i], :]
 
             if i + 1 < nr_of_hull_vs:
@@ -141,7 +136,7 @@ def get_ghost_points_for_voronoi_boundary(xy_points, ghostpoint_mode=0, frame_wi
         x_coords_subpts_frame = np.array([])
         y_coords_subpts_frame = np.array([])
 
-        for i in range(nr_of_frame_corner_pts):
+        for i in xrange(nr_of_frame_corner_pts):
 
             j = i + 1  # next pt in ccw
             if j == nr_of_frame_corner_pts:
@@ -161,9 +156,9 @@ def get_ghost_points_for_voronoi_boundary(xy_points, ghostpoint_mode=0, frame_wi
 
     elif ghostpoint_mode == 2:
 
-        print("Ghost point mode 2: Based on the union of circles with midpoint xy_points and radius R.")
-        print("Radius =", frame_width)
-        print("Resolution simplification parameter =", shape_simplifier)
+        print "Ghost point mode 2: Based on the union of circles with midpoint xy_points and radius R."
+        print "Radius =", frame_width
+        print "Resolution simplification parameter =", shape_simplifier
 
         radius = frame_width
 
@@ -183,7 +178,7 @@ def get_ghost_points_for_voronoi_boundary(xy_points, ghostpoint_mode=0, frame_wi
         xy_ghost_points = np.array([pts_np[:, 0], pts_np[:, 1]]).transpose()
 
     else:
-        print("Ghost point mode default: Do not create any ghost points.")
+        print "Ghost point mode default: Do not create any ghost points."
         xy_ghost_points = np.array([[]]).reshape(-1, 2)
 
     return xy_ghost_points
@@ -218,7 +213,7 @@ def get_areas_voronoi_polygons(vor):
 
     nr_of_points = np.size(vor.point_region)
     area_vor_input_point_based = np.zeros(nr_of_points)
-    for i in range(nr_of_points):
+    for i in xrange(nr_of_points):
         current_region = vor.point_region[i]
         area_vor_input_point_based[i] = area_vor_regions[current_region]
     # new criteria
@@ -229,7 +224,7 @@ def is_in_voronoi_region(vor, region, probe_point):
     # check if a certain probe point is within a certain vor region
 
     if np.size(probe_point) != 2:
-        print("Probe point not valid")
+        print "Probe point not valid"
 
     current_region_vs = vor.regions[region]
     xy_current_region_vs = vor.vertices[current_region_vs]
@@ -275,10 +270,10 @@ def sample_new_DA_point(vor, vor_initial, is_ghost_point, is_ghost_pt_initial, m
                 continue
 
     if is_valid_point:
-        print("New DA coords: ", xy_new_pt, "Nr. of tries:", it, "Is valid DA:", is_valid_point)
+        print "New DA coords: ", xy_new_pt, "Nr. of tries:", it, "Is valid DA:", is_valid_point
         return xy_new_pt, is_valid_point
     else:
-        print("No valid DA found after", it, "tries...")
+        print "No valid DA found after", it, "tries..."
         return np.array([-1.e9, -1.e9]), is_valid_point
 
 
@@ -353,11 +348,11 @@ def add_AVs(polygon_vs_xy, xy_DA_roots, target_da_av_ratio, xy_AV_roots = np.arr
                 # difference between x and y coordinates of the new segment from all segments. Compute sum of differences,
                 # should be zero if points of both vertices coincide.
                 sum_of_coord_diffs_segments = np.array(
-                    [np.sum(np.abs(all_segments - current_segment)[i]) for i in range(nr_of_segments)])
+                    [np.sum(np.abs(all_segments - current_segment)[i]) for i in xrange(nr_of_segments)])
                 # for the case where the two vertices are flipped
                 sum_of_coord_diffs_segments_flip = np.array(
                     [np.sum(np.abs(all_segments - np.roll(current_segment, 1, axis=0))[i]) for i in
-                     range(nr_of_segments)])
+                     xrange(nr_of_segments)])
                 is_dublicate_segment = np.logical_or(sum_of_coord_diffs_segments < tol_vs_positions,
                                                      sum_of_coord_diffs_segments_flip < tol_vs_positions)
                 if True in is_dublicate_segment:
@@ -375,7 +370,7 @@ def add_AVs(polygon_vs_xy, xy_DA_roots, target_da_av_ratio, xy_AV_roots = np.arr
     new_AV_id = 0
     is_valid_AV = False
 
-    for new_AV_id in range(nr_of_new_AVs):
+    for new_AV_id in xrange(nr_of_new_AVs):
 
         xy_new_AV_candidate, is_valid_AV = sample_new_AV_point(all_segments,lengths_segments, xy_DA_roots, xy_AV_roots, min_dist_2_DA, min_dist_2_AV, max_nr_of_tries=max_nr_of_tries)
 
@@ -386,11 +381,11 @@ def add_AVs(polygon_vs_xy, xy_DA_roots, target_da_av_ratio, xy_AV_roots = np.arr
                 xy_AV_roots = xy_new_AV_candidate.reshape(-1,2)
 
         else:
-            print("No valid new point found after", new_AV_id, '/', nr_of_new_AVs, 'added')
+            print "No valid new point found after", new_AV_id, '/', nr_of_new_AVs, 'added'
             break
 
     if is_valid_AV:
-        print("Total of", new_AV_id+1, '/', nr_of_new_AVs, 'added')
+        print "Total of", new_AV_id+1, '/', nr_of_new_AVs, 'added'
     return xy_AV_roots
 
 
@@ -436,10 +431,10 @@ def sample_new_AV_point(all_segments, lengths_segments, xy_DA_roots, xy_AV_roots
             continue
 
     if is_valid_point:
-        print("New AV coords: ", xy_new_AV_candidate, "Nr. of tries:", it, "Is valid AV:", is_valid_point)
+        print "New AV coords: ", xy_new_AV_candidate, "Nr. of tries:", it, "Is valid AV:", is_valid_point
         return xy_new_AV_candidate, is_valid_point
     else:
-        print("No valid AV found after", it, "tries...")
+        print "No valid AV found after", it, "tries..."
         return np.array([-1.e9, -1.e9]), is_valid_point
 
 

@@ -6,8 +6,6 @@ from matplotlib.collections import LineCollection
 from matplotlib.ticker import (AutoMinorLocator, MultipleLocator)
 import matplotlib.patches as patches
 
-import igraph
-
 
 def visualize_DAs_refinement(xy_DA_roots, is_initial_DA, vor, is_ghost_pt, show_areas=False,
                              show_MCA_ACA_root = False, xy_MCA_root = np.array([]), xy_ACA_root = np.array([]),
@@ -88,7 +86,7 @@ def visualize_DA_distribution(areas, density_ref_surface = 1.e6, filepath_densit
 
     fig2, ax2 = plt.subplots()
 
-    sns.distplot(df_voronoi['Densities_initial'], ax=ax2,rug=True, hist=False)
+    sns.histplot(df_voronoi['Densities_initial'], ax=ax2,rug=True, hist=False)
 
     ax2.axvline(df_voronoi['Densities_initial'].mean(), color='0', linestyle='-', label='Mean')
     ax2.axvline(df_voronoi['Densities_initial'].median(), color='.5', linestyle='-', label='Median')
@@ -105,7 +103,7 @@ def visualize_DA_distribution(areas, density_ref_surface = 1.e6, filepath_densit
 
     fig3, ax3 = plt.subplots()
 
-    sns.distplot(df_voronoi['Areas_init'], ax=ax3,rug=True, hist=False)
+    sns.histplot(df_voronoi['Areas_init'], ax=ax3,rug=True, hist=False)
 
     ax3.axvline(df_voronoi['Areas_init'].mean(), color='0', linestyle='-', label='Mean')
     ax3.axvline(df_voronoi['Areas_init'].median(), color='.5', linestyle='-', label='Median')
