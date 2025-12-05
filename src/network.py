@@ -9,6 +9,7 @@ import numpy as np
 
 import igraph
 from pandas._libs.tslibs.dtypes import NpyDatetimeUnit
+from pandas.core.arrays import boolean
 from scipy.spatial import Voronoi, ConvexHull
 from shapely.geometry import Point, Polygon
 from shapely.ops import unary_union
@@ -195,7 +196,7 @@ def refine_DA_density(
         # )
 
         # Area of each polygon, sorted in order of input points
-        _, area_vor_input_point_based = get_areas_voronoi_polygons(vor)
+        _, area_vor_pt_regions = get_areas_voronoi_polygons(vor)
 
         xy_new_point, is_valid_point = sample_new_DA_point(
             vor, vor_initial, is_ghost_pt, is_ghost_pt_initial,
@@ -215,7 +216,7 @@ def refine_DA_density(
                 show_areas=True,
                 show_MCA_ACA_root=show_MCA_ACA_root,
                 xy_MCA_root=xy_MCA_root, xy_ACA_root=xy_ACA_root,
-                area_vor_input_point_based=area_vor_input_point_based,
+                area_vor_input_point_based=area_vor_pt_regions,
                 show_new_point=True,
                 xy_new_point=xy_new_point,
                 voronoi_region_ptid_new_pt=voronoi_region_ptid_new_pt,
@@ -224,8 +225,8 @@ def refine_DA_density(
                 filepath=save_path + "refinement_nr_" + str(step_refine) + ".png"
             )
 
-        areas_valid = area_vor_input_point_based[
-        np.logical_and(area_vor_input_point_based > 0, np.logical_not(is_ghost_pt))]
+        areas_valid = area_vor_pt_regions[
+        np.logical_and(area_vor_pt_regions > 0, np.logical_not(is_ghost_pt))]
         visualize_DA_distribution(
             areas_valid,
             filepath_density=f"${save_path}density_distr_refinement_nr_${step_refine}.png"
@@ -243,13 +244,13 @@ def refine_DA_density(
                 xy_DA_roots, is_initial_DA, vor, is_ghost_pt,
                 show_areas=True, show_MCA_ACA_root=show_MCA_ACA_root,
                 xy_MCA_root=xy_MCA_root, xy_ACA_root=xy_ACA_root,
-                area_vor_input_point_based=area_vor_input_point_based, show_new_point=False,
+                area_vor_input_point_based=area_vor_pt_regions, show_new_point=False,
                 xy_new_point=xy_new_point,
                 show_vs_ids=False, title="DAs refinement step " + str(step_refine),
                 filepath=save_path + "refinement_nr_" + str(step_refine) + ".png"
             )
-            areas_valid = area_vor_input_point_based[
-                np.logical_and(area_vor_input_point_based > 0, np.logical_not(is_ghost_pt))
+            areas_valid = area_vor_pt_regions[
+                np.logical_and(area_vor_pt_regions > 0, np.logical_not(is_ghost_pt))
             ]
             visualize_DA_distribution(
                 areas_valid,
@@ -317,7 +318,7 @@ def gen_ghost_points(
 def voronoi_tessalation(
   xy_DA_roots: CoordinateArray,
   xy_ghost_points: CoordinateArray
-):
+) -> Tuple[Voronoi, NDArray[np.bool]]:
   xy_voronoi_pts = np.concatenate((xy_DA_roots, xy_ghost_points), axis=0)
 
   is_ghost_pt = np.full(xy_voronoi_pts.shape[0], fill_value=False)
@@ -357,29 +358,35 @@ def get_areas_voronoi_polygons(
 
     Returns:
         area_vor_regions: List[np.float64]
+            Areas for each region, -1 represents open geometry.
 
-        area_vor_input_point_based: List[np.float64]
+        area_vor_pt_regions: List[np.float64]
+            Areas for each point of vor.vertices in the same order.
     """
 
-    coords_voronoi_vertices = vor.vertices  # coordinates of all vertices
-    area_vor_regions = np.empty((0, ))  # surface area of each polygon
+    # coordinates of all vertices
+    coords_voronoi_vertices : CoordinateArray = vor.vertices
+    # surface area of each polygon
+    area_vor_regions : NDArray[np.float64] = np.empty((0, ))
 
     # find area of each voronoi polygon
-    for i in vor.regions:  # i is a list of indices to vertices of each region
+    # i (list[int]) is a list of indices to vertices of each region
+    for i in vor.regions:
         if len(i) > 2 and (-1 not in i):  # -1 or only 2 vertices: not closed
-            cord_rg = coords_voronoi_vertices[i, :]
-            area_vor_regions = np.append(area_vor_regions, PolyArea(x_rg, y_rg))
+            corrds_rg = coords_voronoi_vertices[i, :]
+            area_vor_regions = np.append(area_vor_regions, PolyArea(corrds_rg))
         else:
             area_vor_regions = np.append(area_vor_regions, -1)
 
-            nr_of_points = np.size(vor.point_region)
-            area_vor_input_point_based = np.zeros(nr_of_points)
-            for i in range(nr_of_points):
-                current_region = vor.point_region[i]
-                area_vor_input_point_based[i] = area_vor_regions[current_region]
-            # new criteria
+    nr_points = np.size(vor.point_region)
+    area_vor_pt_regions : NDArray[np.float64] = np.zeros(nr_points)
+    for i in range(nr_points):
+        # vor.point_region[i] is the region corresponds to the vor.vertices[i]
+        pt_region : np.intp = vor.point_region[i]
+        area_vor_pt_regions[i] = area_vor_regions[pt_region]
 
-    return area_vor_regions, area_vor_input_point_based  # areas for each polygon: for each region, for each associated point
+    # areas for each polygon: for each region, for each associated point
+    return area_vor_regions, area_vor_pt_regions
 
 
 def is_in_voronoi_region(vor, region, probe_point):
@@ -397,7 +404,15 @@ def is_in_voronoi_region(vor, region, probe_point):
     return probe_point.within(poly)
 
 
-def sample_new_DA_point(vor, vor_initial, is_ghost_point, is_ghost_pt_initial, min_distance, target_density, nr_of_tries=10):
+def sample_new_DA_point(
+    vor : Voronoi,
+    vor_initial : Voronoi,
+    is_ghost_point,
+    is_ghost_pt_initial,
+    min_distance,
+    target_density,
+    nr_of_tries=10
+):
   x_min = np.min(vor_initial.points[:, 0])
   x_max = np.max(vor_initial.points[:, 0])
   y_min = np.min(vor_initial.points[:, 1])
