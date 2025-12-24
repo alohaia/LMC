@@ -15,6 +15,7 @@ import numpy as np
 from numpy.typing import NDArray
 from pandas.core.internals.blocks import shift
 from shapely import polygons
+from lmc import config
 from lmc.types import *
 
 from igraph import Graph
@@ -356,7 +357,10 @@ def add_AVs(
     if is_valid_AV:
         print("Total of", i_new_AV + 1, '/', nr_AVs_new, 'added')
 
-    append_vertices(g, xy_AV_roots, {"type": "AV root"})
+    append_vertices(g, xy_AV_roots, {
+        "is_AV_root": True,
+        "type": "AV root"
+    })
 
 
 def connect_new_DA_roots(
@@ -565,41 +569,46 @@ def _connect_new_DA_root_to_graph(
     return True
 
 
-def add_da_trees_to_sa_graph(graph_main: Graph, da_candidates) -> bool:
-    nr_of_open_DA_starting_pts = 1e6
+def add_pt_trees(graph_main: Graph,
+                 tree_type: list[Literal["DA", "AV"]]) -> bool:
+    for ttype in tree_type:
 
-    graph_main.vs['is_free_root'] = graph_main.vs['is_DA_root']
+        graph_main.vs['is_free_root'] = \
+            np.equal(graph_main.vs[f"is_{ttype}_root"], True)
 
-    while nr_of_open_DA_starting_pts > 0:
+        breakpoint()
 
-        i_DA_tree = np.random.choice(da_candidates)
-        rotation = np.random.rand() * 2 * np.pi
+        while np.sum(graph_main.vs['is_free_root']) > 0:
+            i_free_root = np.random.choice(
+                config.pttree_candidates[ttype]
+            )
+            rotation = np.random.rand() * 2 * np.pi
 
-        g_da = io.load_penetrating_tree(
-            ptr_type=2, id=i_DA_tree, scale=2 / 3, rotate=rotation,
-            min_diam=4.5
-        )
+            g_pttree = io.load_penetrating_tree(
+                tree_type=ttype,
+                id=i_free_root,
+                scale=2 / 3,
+                rotate=rotation,
+                min_diam=4.5
+            )
 
-        print(f'DA tree: {i_DA_tree}, '
-              f'Max. degree current DA: {np.max(g_da.degree())}')
+            print(f"{ttype} tree: {i_free_root}, "
+                f"Max. degree: {np.max(g_pttree.degree())}")
 
-        ####### HRER ########
+            _merge_sa_with_tree(graph_main, g_pttree, ttype)
 
-        graph_main, nr_of_open_DA_starting_pts \
-                               = _merge_sa_with_tree(graph_main, g_da, 2)
+        del graph_main.vs['is_free_root']
 
-    del graph_main.vs['is_free_root']
+    return True
 
-    return graph_main
 
 def _merge_sa_with_tree(
-    graph_main: Graph, graph_tree: Graph, type_tree: Literal[2, 3]
+    graph_main: Graph, graph_tree: Graph, tree_type: Literal["DA", "AV"]
 ) -> bool:
     """Merge SA network with penetrating tree."""
 
     # Read PA data {{{
     ## adjacency (contains vertex ids) != edge (contains vertex coordinates)
-    adj_pa = np.array(graph_main.get_edgelist(), dtype=np.int_)
     vs_pa = ops.get_vs(graph_main, z=True)
     n_vs_pa = graph_main.vcount()
 
@@ -621,15 +630,13 @@ def _merge_sa_with_tree(
 
     # Read tree data and vertex offset to PA graph {{{
     adj_tree = np.array(graph_tree.get_edgelist(), dtype=np.int_)
-    n_adj_tree = graph_tree.ecount()
-    n_vs_tree = graph_tree.vcount()
     vs_tree_moved = ops.get_vs(graph_tree, z=True) + pa_free_root # translate
 
     ## get attachment point (root point) {{{
-    if type_tree == 2:
+    if tree_type == "DA":
         vid_tree_root = np.where(graph_tree.vs['is_connected2PA'])[0] \
             + n_vs_pa
-    elif type_tree == 3:
+    elif tree_type == "AV":
         vid_tree_root = np.where(graph_tree.vs['is_connected2PV'])[0] \
             + n_vs_pa
     if np.size(vid_tree_root) > 1:
@@ -653,7 +660,7 @@ def _merge_sa_with_tree(
         }
     )
     # it is connected now, set to False
-    graph_main.vs[2]["is_free_root"] = False
+    graph_main.vs[vid_pa_free_root]["is_free_root"] = False
 
     graph_main.add_edges(
         adj_tree + n_vs_pa,
@@ -686,5 +693,4 @@ def _merge_sa_with_tree(
     # }}}
 
     return True
-
 

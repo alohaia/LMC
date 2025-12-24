@@ -46,6 +46,8 @@ for mouse in mice:
     #
     # io.save(graph, f"results/{mouse}/SA_network.xlsx")
 
+
+
     graph = io.load(f"results/{mouse}/SA_network.xlsx")
 
     fig, ax = viz.plot_graph(graph)
@@ -54,11 +56,15 @@ for mouse in mice:
         dpi=600,
         bbox_inches="tight"
     )
+    nw.add_pt_trees(graph, tree_type=["DA", "AV"])
 
-    da_candidates = np.array([0, 2, 4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
-                            21, 22, 23, 24, 26, 27, 28, 29,
-                            32, 33, 35, 36, 37, 39, 42, 44, 45, 46, 47, 48, 49,
-                            50, 52, 54, 55, 56], dtype=np.int_)
+    io.save(graph, f"results/{mouse}/DA_trees_added.xlsx")
 
-    nw.add_da_trees_to_sa_graph(graph, da_candidates)
+
+    # graph = io.load(f"results/{mouse}/DA_trees_added.xlsx")
+
+
+    breakpoint()
+
+
 

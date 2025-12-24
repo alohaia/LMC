@@ -180,7 +180,7 @@ def load(path: Union[Path, str]):
 
 
 def load_penetrating_tree(
-    ptr_type: Literal[2, 3],
+    tree_type: Literal["DA", "AV"],
     id: Union[str, int],
     scale: float = 1,
     rotate: float = 0,
@@ -188,11 +188,7 @@ def load_penetrating_tree(
     graph_name: str = ""
 ) -> Graph:
     """Load a penetrating vessel tree whose root locates at (0, 0, 0)."""
-    type_map = {
-        2: "arteries",  # DAs
-        3: "veins",     # AVs
-    }
-    path_base = f"{config.dir_penetrating_trees}{type_map[ptr_type]}/{id}"
+    path_base = f"{config.dir_pt_trees[tree_type]}/{id}"
     path_es_dict = f"{path_base}_edgesDict.pkl"
     path_vs_dict = f"{path_base}_verticesDict.pkl"
 
@@ -209,13 +205,13 @@ def load_penetrating_tree(
     if graph_name:
         g['name'] = graph_name
     else:
-        g['name'] = f"Penetrating tree ({type_map[ptr_type]}) #{id}"
+        g['name'] = f"Penetrating tree ({tree_type}) #{id}"
     ## }}}
 
     ## vertex attributes {{{
     # is_connected2PV, is_connected2PA and is_connected2caps
     degree = np.array(g.degree())
-    if ptr_type == 2:
+    if tree_type == "DA":
         g.vs["is_connected2PA"] = np.equal(vsdf["attachmentVertex"], 1)
         g.vs["is_connected2PV"] = np.full(g.ecount(), fill_value=False)
         g.vs["is_connected2caps"] = np.logical_and(
@@ -225,7 +221,7 @@ def load_penetrating_tree(
         is_da_root_vs = np.equal(g.vs["is_connected2PA"], 1)
         # ignore other attachment vertices
         coord_tree_root = np.array(vsdf["coords"])[is_da_root_vs][0]
-    elif ptr_type == 3:
+    elif tree_type == "AV":
         g.vs["is_connected2PA"] = np.full(g.ecount(), fill_value=False)
         g.vs["is_connected2PV"] = np.equal(vsdf["attachmentVertex"], 1)
         g.vs["is_connected2caps"] = np.logical_and(
@@ -262,7 +258,8 @@ def load_penetrating_tree(
 
     # g.es["is_stroke"] = np.full(g.ecount(), fill_value=False)
     # 0-PA; 1-PV; 2-DA; 3-AV; 4-C
-    g.es["type"] = np.full(g.ecount(), fill_value=ptr_type)
+    g.es["type"] = np.full(g.ecount(),
+                           fill_value=2 if tree_type == "DA" else 3)
     ## }}}
 
     return g
