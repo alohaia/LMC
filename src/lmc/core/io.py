@@ -1,14 +1,11 @@
 """Base data reading, writing and conversion operations."""
 
 from typing import Literal, Union
+from numpy.typing import ArrayLike
 from pathlib import Path
 
-from matplotlib.pyplot import uninstall_repl_displayhook
-from pandas.core.series import astype_is_view
-
 from lmc import utils
-from lmc.core import ops, io
-from lmc.types import Vertices
+from lmc.core import ops
 from lmc import config
 
 import numpy as np
@@ -16,19 +13,15 @@ import pandas as pd
 from igraph import Graph
 
 import pickle
-
+import meshio
 
 def create_from_file(
-    # data_xlsx
     data_xlsx: Union[Path, str] = "",
-    # dir
     dir: Union[Path, str] = "",
-    # vertex_csv&edge_csv
     vertex_csv: Union[Path, str] = "",
     edge_csv: Union[Path, str] = "",
     name: str = "",
-    as_is: bool = False,
-    calc_length: bool = True,
+    convert_bool_attrs: bool = True,
     use_vids: bool = False
 ) -> Graph:
     """Create an igraph Graph object from vertices and edges CSV data.
@@ -42,9 +35,6 @@ def create_from_file(
         vertex_csv: Path to the CSV file containing the vertex data.
         edge_csv: Path to the CSV file containing the edge data.
         name: Value of graph-level `"name"` attribute.
-        as_is: Wheter to create graph AS IS (only containing auto-genrated
-            graph-level attributes and original data).
-        calc_length: Whether to automatically caculate lengthes of edges.
         use_vids: Whether to interpret first two columns of edge data as vertex
             indices or vertex names specified by first column of vertex data.
 
@@ -80,8 +70,7 @@ def create_from_file(
         vs_attrs_df=vs,
         es_attrs_df=es,
         graph_attrs=gattrs,
-        as_is=as_is,
-        calc_length=calc_length,
+        convert_bool_attrs=convert_bool_attrs,
         use_vids=use_vids
     )
 
@@ -93,8 +82,7 @@ def create_from_data(
     vs_attrs_df: pd.DataFrame,
     es_attrs_df: pd.DataFrame,
     graph_attrs: dict = {},
-    as_is: bool = False,
-    calc_length: bool = True,
+    convert_bool_attrs: bool = True,
     use_vids: bool = False
 ) -> Graph:
     """Create an igraph Graph object from vertices and edges `DataFrame` data.
@@ -103,9 +91,6 @@ def create_from_data(
         vs_attrs_df: `DataFrame` of vertex attributes.
         es_attrs_df: `DataFrame` of edge attributes.
         graph_attrs: Graph-level attributes.
-        as_is: Wheter to create graph AS IS (only containing auto-genrated
-            graph-level attributes and original data).
-        calc_length: Whether to automatically caculate lengthes of edges.
         use_vids: Whether to interpret first two columns of edge data as vertex
             indices or vertex names specified by first column of vertex data.
 
@@ -119,32 +104,15 @@ def create_from_data(
         g[k] = v
     # }}}
 
-    # return AS IS.
-    if as_is:
-        return g
-
-    # additional processings {{{
-    ## z coordinate
-    if "z" not in g.vs.attributes():
-        g.vs["z"] = np.zeros(g.vcount(), dtype=np.float64)
-
     ## convert attributes starting with "is_" and containing only 0, 1, nan to
     ## bool
-    for a in ("vs", "es"):
-        vore = getattr(g, a)
-        for attr in vore.attributes():
-            if attr.startswith("is_") and all(
-                    map(lambda x: x in [0, 1] or np.isnan(x), vore[attr])):
-                vore[attr] = [a == 1 for a in vore[attr]]
-
-    ## type of vertices and edges
-    g.vs["type"] = np.where(g.vs["is_DA_root"], "DA root", "")
-    g.es["type"] = 0    # edge type: 0-PA; 1-PV; 2-DA; 3-AV; 4-C
-
-    ## calculate edge lengths
-    if calc_length:
-        g.es["length"] = ops.calc_es_length(g)
-    # }}}
+    if (convert_bool_attrs):
+        for a in ("vs", "es"):
+            vore = getattr(g, a)
+            for attr in vore.attributes():
+                if attr.startswith("is_") and all(
+                        map(lambda x: x in [0, 1] or np.isnan(x), vore[attr])):
+                    vore[attr] = [a == 1 for a in vore[attr]]
 
     return g
 
@@ -174,8 +142,8 @@ def load(path: Union[Path, str]):
         graph_attrs=dt["graph"].to_dict(orient="records")[0],
         vs_attrs_df=dt["vertices"],
         es_attrs_df=dt["edges"],
-        calc_length=False,
         use_vids=True,
+        convert_bool_attrs=True
     )
 
 
@@ -209,12 +177,12 @@ def load_penetrating_tree(
     ## }}}
 
     ## vertex attributes {{{
-    # is_connected2PV, is_connected2PA and is_connected2caps
+    # is_connected2PV, is_connected2PA and is_connected2Cap
     degree = np.array(g.degree())
     if tree_type == "DA":
         g.vs["is_connected2PA"] = np.equal(vsdf["attachmentVertex"], 1)
         g.vs["is_connected2PV"] = np.full(g.ecount(), fill_value=False)
-        g.vs["is_connected2caps"] = np.logical_and(
+        g.vs["is_connected2Cap"] = np.logical_and(
             degree == 1, np.equal(g.vs["is_connected2PA"], False)
         )
 
@@ -224,7 +192,7 @@ def load_penetrating_tree(
     elif tree_type == "AV":
         g.vs["is_connected2PA"] = np.full(g.ecount(), fill_value=False)
         g.vs["is_connected2PV"] = np.equal(vsdf["attachmentVertex"], 1)
-        g.vs["is_connected2caps"] = np.logical_and(
+        g.vs["is_connected2Cap"] = np.logical_and(
             degree == 1, np.equal(g.vs["is_connected2PV"], False)
         )
 
@@ -257,11 +225,36 @@ def load_penetrating_tree(
     g.es["diameter"] = diameter
 
     # g.es["is_stroke"] = np.full(g.ecount(), fill_value=False)
-    # 0-PA; 1-PV; 2-DA; 3-AV; 4-C
-    g.es["type"] = np.full(g.ecount(),
-                           fill_value=2 if tree_type == "DA" else 3)
+    g.es["type"] = np.full(g.ecount(), fill_value=tree_type)
     ## }}}
 
     return g
 
+
+# TODO: save vtp format using vtk module
+def write_vtk(graph, path):
+    points = np.array([graph.vs["x"], graph.vs["y"], graph.vs["z"]]).T
+    edges: list[tuple[str, ArrayLike] | meshio.CellBlock] = \
+        [("line", np.array(graph.get_edgelist()))]
+
+    # vlabels, vtypes = np.unique(graph.vs["type"], return_inverse=True)
+    mesh = meshio.Mesh(
+        points=points,
+        cells=edges,
+        point_data={
+            "index": graph.vs.indices,
+            "coords": points,
+            "x": points[:, 0],
+            "y": points[:, 1],
+            "z": points[:, 2],
+            # "vertex_type": vtypes
+        },
+        cell_data={
+            "diameter": [np.array(graph.es["diameter"])],
+            # "edge_type": [np.searchsorted(("PA", "DA", "AV", "Cap"),
+            #                               graph.es["type"])],
+        }
+    )
+
+    mesh.write(path)
 

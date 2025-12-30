@@ -17,7 +17,7 @@ def test_plot_graph(g_refined: Graph):
     viz.plot_graph(g_refined)
 
 def test_plot_voronoi(g_refined):
-    points = ops.filter_vs(g_refined, "is_DA_root")
+    points = ops.filter_vs(g_refined, "is_DA_root", z=False)
     ght_points = ops.gen_ghost_points(points, 800, 10)
     vor = ops.voronoi_tessalation(points, ght_points, "DA root")
     viz.plot_voronoi(vor)

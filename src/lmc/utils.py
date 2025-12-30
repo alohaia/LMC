@@ -16,3 +16,27 @@ def read_xlsx(path: Union[Path, str] = "") -> dict[str, DataFrame]:
         dfs[sheet_name] = pd.DataFrame(xl.parse(sheet_name))
 
     return dfs
+
+def vtk2vtp(invtkfile, outvtpfile, binary=False):
+    import vtk
+
+    reader = vtk.vtkPolyDataReader()
+    # reader = vtk.vtkUnstructuredGridReader()
+    reader.SetFileName(invtkfile)
+
+    reader.Update()  # load to memory
+
+    writer = vtk.vtkXMLPolyDataWriter()
+    writer.SetFileName(outvtpfile)
+
+    writer.SetInputConnection(reader.GetOutputPort())
+
+    if binary:
+        writer.SetDataModeToBinary()
+    else:
+        writer.SetDataModeToAscii()
+
+    writer.Write() # equals to Update()
+
+    print(f"Successfully converted {invtkfile} to {outvtpfile}")
+

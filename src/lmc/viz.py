@@ -23,9 +23,9 @@ def plot_graph(g: Graph) -> tuple[Figure, Axes]:
     fig, ax = plt.subplots(1, 1, figsize=(8, 8))
 
     # Vertices and points {{{
-    vs_da = ops.filter_vs(g, vtype=("DA root",))
-    vs_da_added = ops.filter_vs(g, vtype=("DA root added manually",))
-    vs_av = ops.filter_vs(g, vtype=("AV root",))
+    vs_da = ops.filter_vs(g, vtype=("DA root",), z=False)
+    vs_da_added = ops.filter_vs(g, vtype=("DA root added manually",), z=False)
+    vs_av = ops.filter_vs(g, vtype=("AV root",), z=False)
     ax.scatter(
         label="Original DA root",
         x=vs_da[:, 0], y=vs_da[:, 1],
@@ -44,9 +44,11 @@ def plot_graph(g: Graph) -> tuple[Figure, Axes]:
     # }}}
 
     # Edges and ridgets {{{
-    es_pa = ops.filter_es(g, attr_not=("is_added_manually", "is_collateral"), etype=(0,))
-    es_pa_added = ops.filter_es(g, attr="is_added_manually", attr_not="is_collateral", etype=(0,))
-    es_pa_col = ops.filter_es(g, attr="is_collateral", etype=(0,))
+    es_pa = ops.filter_es(g, attr_not=("is_added_manually", "is_collateral"),
+                          etype="PA", z=False)
+    es_pa_added = ops.filter_es(g, attr="is_added_manually",
+                                attr_not="is_collateral", etype="PA", z=False)
+    es_pa_col = ops.filter_es(g, attr="is_collateral", etype="PA", z=False)
 
     ax.add_collection(LineCollection(es_pa.tolist(), colors="#810400", linewidths=4))
     ax.add_collection(LineCollection(es_pa_added.tolist(), colors="#FE9A56", linewidths=4))
@@ -72,11 +74,56 @@ def plot_graph(g: Graph) -> tuple[Figure, Axes]:
 
     return fig, ax
 
-def plot_edges(edges, ax, **kwargs):
-    lc = LineCollection(edges, **kwargs)
-    ax.add_collection(lc)
+def plot_caps(g):
+    fig, ax = plt.subplots(1, 1, figsize=(8, 8))
 
-    return ax
+    vertex_type_to_color = {
+        "p": "black", "q": "black",
+        "a": "red",
+        "b": "green",
+        "c": "blue",
+        "d1": "yellow", "d2": "yellow",
+        "split node": "gray",
+    }
+    vertex_colors = [vertex_type_to_color[t] for t in g.vs["type"]]
+
+    edge_type_to_color = {
+        "e1": "black", "e2": "black", "e3": "black",
+        "a": "red",
+        "b": "green",
+        "c": "blue",
+        "d1": "yellow", "d2": "yellow",
+        "connect edge": "gray"
+    }
+    edge_colors = [edge_type_to_color[t] for t in g.es["type"]]
+
+    ax.scatter(
+        g.vs["x"], g.vs["y"],
+        # label=vs_type,
+        c=vertex_colors,
+        s=20,
+        zorder=3
+    )
+
+    ax.add_collection(LineCollection(
+        ops.get_es(g, z=False).tolist(),
+        # label=es_type,
+        colors=edge_colors,
+        linewidths=1.5,
+        alpha=0.8
+    ))
+
+    # ax.legend()
+    ax.invert_yaxis()
+    ax.set_aspect("equal", adjustable="box")
+
+    return fig, ax
+
+# def plot_edges(edges, ax, **kwargs):
+#     lc = LineCollection(edges, **kwargs)
+#     ax.add_collection(lc)
+#
+#     return ax
 
 def plot_voronoi(
     vor: Voronoi,
@@ -132,11 +179,10 @@ def plot_DAs_refinement(
     title="Test",
     filepath="newfile.png"
 ) -> None:
-    xys_vs = ops.get_vs(graph)
-    xys_DA_roots = ops.filter_vs(graph, attr="is_DA_root")
-    xys_MCA_roots = ops.filter_vs(graph, attr="is_MCA_in")
-    xys_ACA_roots = ops.filter_vs(graph, attr="is_ACA_in")
-    xys_ghost_points = ops.filter_vs(graph, vtype=("Ghost point",))
+    xys_DA_roots = ops.filter_vs(graph, attr="is_DA_root", z=False)
+    xys_MCA_roots = ops.filter_vs(graph, attr="is_MCA_in", z=False)
+    xys_ACA_roots = ops.filter_vs(graph, attr="is_ACA_in", z=False)
+    # xys_ghost_points = ops.filter_vs(graph, vtype=("Ghost point",), z=False)
 
     fig, ax = plt.subplots()
 

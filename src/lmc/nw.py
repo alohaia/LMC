@@ -4,32 +4,28 @@
 scripts. Mainly contains functions manipulating network objects (igraph.Graph).
 """
 
+from os import EX_CONFIG
 from pathlib import Path
-from typing import Literal
+from sys import breakpointhook
+from typing import Literal, get_protocol_members
 
-from igraph.drawing import graph
-from matplotlib.pyplot import axis, flag
+from igraph.drawing.metamagic import AttributeSpecification
 import pandas as pd
 import numpy as np
-
 from numpy.typing import NDArray
-from pandas.core.internals.blocks import shift
-from shapely import polygons
+from pandas.core.algorithms import value_counts_arraylike
+
 from lmc import config
-from lmc.types import *
-
-from igraph import Graph
-
 from lmc.config import graph_attrs
+from lmc.types import *
 from lmc import viz
 from lmc.core import ops, io
 
-from scipy.spatial import Voronoi
-from shapely.geometry import Point, Polygon
+from igraph import Graph
 
-
-import pickle
-import sys
+from scipy.spatial import KDTree
+from scipy.optimize import linear_sum_assignment
+from scipy.spatial.distance import cdist
 
 
 def check_attrs(g: Graph) -> bool:
@@ -135,7 +131,7 @@ def refine_DA_density(
     path = Path(f"{save_path}refinement/")
     path.mkdir(parents=True, exist_ok=True)
 
-    DA_roots = ops.filter_vs(g, "is_DA_root")
+    DA_roots = ops.filter_vs(g, "is_DA_root", z=False)
 
     # Prepare two arrays for new DA roots
     DA_roots_new: Vertices = np.empty((0, 2))
@@ -246,35 +242,6 @@ def refine_DA_density(
         "is_DA_root_added_manually": True,
         "type": "DA root added manually",
     })
-    # TODO: add test
-    #  vor.points = original DA roots + DA roots added + ghost points
-
-    # #> 2
-    # append_vertices(g, vor.points[vor.point_annot == "Ghost point"],
-    #                 {"type": "Ghost point"})
-    # # now g.vs = other + original DA roots + DA roots added + ghost points
-    # #            ^^^^^^^^^^^^^^^^^^^^^^^^^
-    # #            see io.create()
-    # #                                   1 -> ^^^^^^^^^^^^^^
-    # #                                                    2 -> ^^^^^^^^^^^^
-    # #            + vor vertices (below)
-    # append_vertices(g, vor.vertices, {"type": "Voronoi vertex"})
-
-    # n_other = np.sum(np.array(g.vs["is_DA_root"]) == False)
-    # n_vor_pts = vor.points.shape[0]
-    #
-    # es_vor_pts = vor.ridge_points + n_other
-    #
-    # es_vor_vs = [p for p in vor.ridge_vertices if p[0] != -1 and p[1] != -1]
-    # es_vor_vs = np.array(es_vor_vs) + (n_other + n_vor_pts)
-    #
-    # g.add_edges(es_vor_pts, attributes={"type": "Voronoi point ridge"}) # ?
-    # g.add_edges(es_vor_vs, attributes={"type": "Voronoi vertex ridge"})
-
-    # if "Voronoi vertex" in g.vs["type"]:
-    #     print("Repeatly adding Voronoi tessalation is not supported.")
-
-    # }}} TODO?: merge Graph and Voronoi
 
     ### Add refinement attribute
     g["refinement"] = f"Arguments:\n" \
@@ -304,7 +271,8 @@ def add_AVs(
             manually added) in `g`, according to which the AVs are sampled.
         target_da_av_ratio: Defaults to 3.
     """
-    DA_roots= ops.filter_vs(g, vtype=("DA root", "DA root added manually"))
+    DA_roots= ops.filter_vs(g, vtype=("DA root", "DA root added manually"),
+                            z=False)
 
     regions = [
         vor.regions[i] for i in vor.point_region[vor.point_annot == "DA root"]
@@ -435,7 +403,7 @@ def _connect_new_DA_root_to_graph(
     if distort_max > 1.:
         raise ValueError("distort_max should be < 1")
 
-    xy = ops.get_vs(graph)
+    xy = ops.get_vs(graph, z=False)
 
     xy_new_DA = xy[vid_new_DA]
 
@@ -486,9 +454,10 @@ def _connect_new_DA_root_to_graph(
     # L2 distance of new DA to all subpoints
     dist_new_DA_to_all_subpts = np.linalg.norm(xy_all_subpts - xy_new_DA,
                                                axis=1)
+    # exclude non-PA edges and collateral edges
     dist_new_DA_to_all_subpts[
-        # exclude PA edges and collateral edges
-        edge_types[eids_all_subpts] != 0 | edge_is_collateral[eids_all_subpts]
+        (edge_types[eids_all_subpts] != "PA")
+            | edge_is_collateral[eids_all_subpts]
     ] = np.inf
 
     # return False if not at least one empty subpoint is found
@@ -544,7 +513,7 @@ def _connect_new_DA_root_to_graph(
 
     # add new vertices {{{
     # vertex E
-    graph.add_vertex(x=xy_e[0], y=xy_e[1], type="Sub point",
+    graph.add_vertex(x=xy_e[0], y=xy_e[1], z=0, type="PA subpoint",
                      is_DA_root=False, is_DA_root_added_manually=False)
     # }}}
 
@@ -557,26 +526,27 @@ def _connect_new_DA_root_to_graph(
     graph.delete_edges(eid_ab)
     graph.add_edge(edge_vids_ab[0], vid_e,
                    is_added_manually=is_added_manually_ab,
-                   diameter=diameter_ae, length=length_ae, type=0)
+                   diameter=diameter_ae, length=length_ae, type="PA")
     graph.add_edge(edge_vids_ab[1], vid_e,
                    is_added_manually=is_added_manually_ab,
-                    diameter=diameter_eb, length=length_eb, type=0)
+                    diameter=diameter_eb, length=length_eb, type="PA")
     # CE
     graph.add_edge(vid_c, vid_e, is_added_manually=True, diameter=diameter_ce,
-                   length=length_ce, type=0)
+                   length=length_ce, type="PA")
     # }}}
 
     return True
 
 
-def add_pt_trees(graph_main: Graph,
-                 tree_type: list[Literal["DA", "AV"]]) -> bool:
+def add_pt_trees(
+    graph_main: Graph,
+    tree_type: list[Literal["DA", "AV"]]
+) -> bool:
+    """Add penetrating trees to graph."""
     for ttype in tree_type:
 
         graph_main.vs['is_free_root'] = \
             np.equal(graph_main.vs[f"is_{ttype}_root"], True)
-
-        breakpoint()
 
         while np.sum(graph_main.vs['is_free_root']) > 0:
             i_free_root = np.random.choice(
@@ -614,11 +584,11 @@ def _merge_sa_with_tree(
 
     ## choose free root {{{
     vid_pa_free_roots = np.where(graph_main.vs['is_free_root'])[0]
-    nr_pa_free_roots = np.size(vid_pa_free_roots) # current DA root to connect
+    n_pa_free_roots = np.size(vid_pa_free_roots) # current DA root to connect
 
-    print("Nr of remaining tree starting points:", nr_pa_free_roots)
+    print("Nr of remaining tree starting points:", n_pa_free_roots)
 
-    if nr_pa_free_roots < 1:
+    if n_pa_free_roots < 1:
         return True
 
     vid_pa_free_root = vid_pa_free_roots[0]
@@ -634,15 +604,17 @@ def _merge_sa_with_tree(
 
     ## get attachment point (root point) {{{
     if tree_type == "DA":
-        vid_tree_root = np.where(graph_tree.vs['is_connected2PA'])[0] \
+        vid_tree_roots = np.where(graph_tree.vs['is_connected2PA'])[0] \
             + n_vs_pa
     elif tree_type == "AV":
-        vid_tree_root = np.where(graph_tree.vs['is_connected2PV'])[0] \
+        vid_tree_roots = np.where(graph_tree.vs['is_connected2PV'])[0] \
             + n_vs_pa
-    if np.size(vid_tree_root) > 1:
+
+    if np.size(vid_tree_roots) > 1:
         raise ValueError("More than 1 root point found in penetrating vessel "
                          f"tree {graph_tree["name"]}.")
-    vid_tree_root = vid_tree_root[0] # reduce dimension
+
+    vid_tree_root = vid_tree_roots[0] # reduce dimension to single value
     ## }}}
     # }}}
 
@@ -651,12 +623,12 @@ def _merge_sa_with_tree(
         attributes={
             "is_connected2PA": graph_tree.vs["is_connected2PA"],
             "is_connected2PV": graph_tree.vs["is_connected2PV"],
-            "is_connected2caps": graph_tree.vs["is_connected2caps"],
+            "is_connected2Cap": graph_tree.vs["is_connected2Cap"],
             "x": vs_tree_moved[:, 0],
             "y": vs_tree_moved[:, 1],
             "z": vs_tree_moved[:, 2],
             "is_free_root": False,
-            "type": "DA"
+            "type": f"{tree_type} tree point"
         }
     )
     # it is connected now, set to False
@@ -679,7 +651,7 @@ def _merge_sa_with_tree(
 
     # find eid of edge adjacent to head node, first segment of vessel tree
     eid_1st_seg = graph_main.get_eid(vid_tree_root,
-                                    pt_connected_to_tree_root[0])
+                                     pt_connected_to_tree_root[0])
     graph_main.add_edge(
         vid_pa_free_root, pt_connected_to_tree_root[0],
         length=graph_main.es['length'][eid_1st_seg],
@@ -693,4 +665,290 @@ def _merge_sa_with_tree(
     # }}}
 
     return True
+
+def add_capillary_bed(
+    g_main: Graph,
+    z_min_caps=25.0,
+    frame_bounding_box=50.0,
+    distance_between_cap_vs=45.0,
+    l_vessel=62.0,
+    d_vessel=4.5,
+    perturb_vs_frac = 0.0
+) -> None:
+    # Find bounding box coordinates of capillary bed
+    coords_connection_pts = ops.filter_vs(g_main, "is_connected2Cap", z=True)
+
+    x_min = np.min(coords_connection_pts[:, 0]) - frame_bounding_box
+    x_max = np.max(coords_connection_pts[:, 0]) + frame_bounding_box
+
+    y_min = np.min(coords_connection_pts[:, 1]) - frame_bounding_box
+    y_max = np.max(coords_connection_pts[:, 1]) + frame_bounding_box
+
+    z_min = z_min_caps
+    z_max = np.max(coords_connection_pts[:, 2]) + frame_bounding_box
+
+    print(f"Bounding box: ({x_min}~{x_max}, {y_min}~{y_max}, {z_min}~{z_max})")
+
+    g_capbed = ops.create_stacked_hex_network(
+        x_min, x_max, y_min, y_max, z_min, z_max,
+        distance_between_cap_vs, l_vessel, d_vessel, perturb_vs_frac
+    )
+    g_capbed.es["type"] = "Cap"
+    g_capbed.vs["type"] = "Cap point"
+
+    _merge_with_capbed(g_main, g_capbed)
+
+
+def _merge_with_capbed(g_main: Graph, g_capbed:Graph) -> None:
+    from datetime import datetime, timezone
+
+    n_vs_main_orig = g_main.vcount()
+    g_main.add_vertices(
+        g_capbed.vcount(),
+        attributes={a: g_capbed.vs[a] for a in g_capbed.vs.attributes()}
+    )
+    g_main.add_edges(
+        np.array(g_capbed.get_edgelist()) + n_vs_main_orig,
+        attributes={a: g_capbed.es[a] for a in g_capbed.es.attributes()}
+    )
+
+    # leaf points
+    leafs = ops.filter_vs(g_main, attr="is_connected2Cap")
+    vid_leafs = np.where(np.equal(g_main.vs["is_connected2Cap"], True))[0]
+
+    # mid-points of caps edges
+    caps_midpts = np.sum(ops.filter_es(g_main, etype="Cap"), axis=1) / 2
+    eid_caps = np.where(np.equal(g_main.es["type"], "Cap"))[0]
+
+    # # method 1: use KDTree to caculate min distances
+    # kdtree_midpts = KDTree(caps_midpts)
+    # _, indices = kdtree_midpts.query(leafs, k=1)
+
+    # # # method 2: find global optimal solution with no duplicate points
+    # # dist_matrix = cdist(leafs, caps_midpts)  # shape: (n_leafs, n_midpts)
+    # # _, indices = linear_sum_assignment(dist_matrix) # closest vertex indices
+
+    # # (method 1 and 2)connect leafs to end-points of closest caps
+    # adj_list_merged = np.array(g_main.get_edgelist(), dtype=np.int_)
+    # eid_closest_caps = eid_caps[indices]
+    #
+    # es_leaf2endpts = np.vstack((
+    #     np.vstack((vid_leafs, adj_list_merged[eid_closest_caps][:, 0])).T,
+    #     np.vstack((vid_leafs, adj_list_merged[eid_closest_caps][:, 1])).T
+    # ))
+    #
+    # g_main.add_edges(
+    #     es=es_leaf2endpts,
+    #     attributes={
+    #         "diameter": np.array(g_main.es["diameter"])[eid_closest_caps],
+    #         "length": np.array(g_main.es["length"])[eid_closest_caps],
+    #         "type": "Cap",
+    #         "is_added_manually": True
+    #     }
+    # )
+    # g_main.delete_edges(np.unique(eid_closest_caps))
+
+    # method 3: update network after connecting each leaf point
+    for i_leaf in range(leafs.shape[0]):
+
+        vid_leaf = vid_leafs[i_leaf]
+
+        caps_midpts = np.sum(ops.filter_es(g_main, etype="Cap"), axis=1) / 2
+        eid_caps = g_main.es(type_eq="Cap").indices
+        dists = np.linalg.norm(caps_midpts - leafs[i_leaf], axis=1)
+        e_closest_caps = g_main.es[eid_caps[np.argmin(dists)]]
+
+        # breakpoint()
+
+        g_main.add_edges(
+            es=np.array([
+                [vid_leaf, e_closest_caps.source],
+                [vid_leaf, e_closest_caps.target],
+            ]),
+            attributes={
+                "diameter": e_closest_caps["diameter"],
+                "length": e_closest_caps["length"],
+                "type": "Cap",
+                "is_added_manually": True
+            }
+        )
+
+        if i_leaf % 100 == 0:
+            timestmp = datetime.now(timezone.utc) \
+                .strftime("%Y-%m-%d %H:%M:%S UTC")
+            print(
+                f'[{timestmp}] Connecting leafs: '
+                f'{i_leaf}\t/ {leafs.shape[0]} completed: '
+                f'leaf({vid_leaf})to '
+                f'edge({eid_caps[np.argmin(dists)]}: '
+                f'{e_closest_caps.source}->{e_closest_caps.target})\n...'
+            )
+            # breakpoint()
+
+
+def remove_redundant_vessels(graph: Graph) -> None:
+    pass
+
+    # from scipy.sparse import lil_matrix
+    # from scipy.sparse.linalg import spsolve
+    #
+    # # # vkind is type for vertices
+    # # vkind = np.array(graph.vs["type"]).astype("<U2")
+    # # # exclude AV/DA roots
+    # # vkind[np.isin(graph.vs["type"], ("AV root", "DA root",
+    # #                                  "DA root added manually"))] = ""
+    # # graph.vs["vkind"] = vkind
+    #
+    #
+    # # arguments
+    # P_DA_root = 100.0
+    # P_AV_root = 0.0
+    # mu = 1.0 # just relative values
+    #
+    # vs_model = graph.vs(type_in=("DA root", "DA root added manually",
+    #                              "DA tree point", "Cap point",
+    #                              "AV tree point", "AV root"))
+    # es_model = graph.es(type_in=("DA", "AV", "Ca"))
+    # L = lil_matrix((len(vs_model), len(vs_model)))
+    # for e in es_model:
+    #     i, j = e.source, e.target
+    #     r = e["diameter"]
+    #     l = e["length"]
+    #     # G = Q / ΔP
+    #     G = np.pi * r**4 / (8 * mu * l)
+    #     L[i, i] += G
+    #     L[j, j] += G
+    #     L[i, j] -= G
+    #     L[j, i] -= G
+    #
+    # fixed = {}
+    # for v in vs_model():
+    #     if v["type"] in ("DA root", "DA root added manually"):
+    #         fixed[v.index] = P_DA_root
+    #     elif v["type"] == "AV root":
+    #         fixed[v.index] = P_AV_root
+    # fixed_idx = np.array(list(fixed.keys()))
+    #
+    # free = np.array([i for i in range(len(vs_model)) if i not in fixed])
+    #
+    # L = L.tocsr()
+    # L_ff = L[free][:, free]
+    # b_f = np.zeros(len(free))
+    # for k, Pk in fixed.items():
+    #     b_f -= L[free, k].toarray().ravel() * Pk
+    #
+    # P_free = spsolve(L_ff, b_f)
+    #
+    # P = np.zeros(len(vs_model))
+    # P[free] = P_free
+    # for k, Pk in fixed.items():
+    #     P[k] = Pk
+
+
+    # art_vs = graph.vs.select(vkind="DA")
+    # cap_vs = graph.vs.select(vkind="Ca")
+    # ven_vs = graph.vs.select(vkind="AV")
+    #
+    # dist_from_art = graph.shortest_paths(
+    #     source=art_vs,
+    #     target=cap_vs
+    # )
+    # dist_to_ven = graph.shortest_paths(
+    #     source=ven_vs,
+    #     target=cap_vs
+    # )
+    # d_art = np.min(dist_from_art, axis=0)
+    # d_ven = np.min(dist_to_ven, axis=0)
+    #
+    # breakpoint()
+    #
+    # valid_cap = cap_vs[
+    #     (d_art < np.inf) &
+    #     (d_ven < np.inf) &
+    #     (d_art + d_ven <= 30)
+    # ]
+    #
+    # graph.delete_vertices(set(cap_vs.indices) - set(valid_cap.indices))
+
+
+
+def remove_regions_outside_DAs(
+    graph: Graph,
+    max_distance_to_da: float
+) -> None:
+    vid_all = np.arange(graph.vcount())
+    vs_all = ops.get_vs(graph, z=True)
+
+    # vkind is type for vertices
+    vkind = np.array(graph.vs["type"]).astype("<U2")
+    # exclude AV/DA roots
+    vkind[np.isin(graph.vs["type"], ("AV root", "DA root",
+                                     "DA root added manually"))] = ""
+
+    # (Pdb) pd.DataFrame(np.unique(graph.vs["type"], return_counts=True))
+    #              0              1          2        3                       4
+    # 0      AV root  AV tree point  Cap point  DA root  DA root added manually
+    # 1          180          21654      43776       18                      42
+    #               5             6            7
+    # 0 DA tree point      PA point  PA subpoint
+    # 1          5607            36           42
+    # (Pdb) pd.DataFrame(np.unique(vkind, return_counts=True))
+    #        0      1     2   3
+    # 0            AV    DA  PA
+    # 1  43776  21834  5667  78
+
+    # get distances of each AV vertex to its closest DA vertices
+    tree_DAs = KDTree(vs_all[vkind == "DA"])
+    dist_AVs2closestDA, _ = tree_DAs.query(vs_all[vkind == "AV"])
+    # delete all AVs which are beyond certain distance to DAs
+    vid_AVs = vid_all[vkind == "AV"]
+    vid_far_AVs = vid_AVs[dist_AVs2closestDA > max_distance_to_da]
+    graph.delete_vertices(vid_far_AVs)
+
+    # breakpoint()
+    #
+    # tree_ = KDTree(vs_all[np.isin(vkind, ("DA", "AV"))])
+    # dist_AVs2closestDA, _ = tree_DAs.query(vs_all[vkind == "Ca"])
+    # # delete all AVs which are beyond certain distance to DAs
+    # vid_AVs = vid_all[vkind == "AV"]
+    # vid_far_AVs = vid_AVs[dist_AVs2closestDA > max_distance_to_da]
+    # graph.delete_vertices(vid_far_AVs)
+
+    # Delete resulting capillary and AV (exclude roots) dead Ends
+    graph.vs['vkind'] = vkind
+    graph.vs['degree'] = graph.degree()
+    while len(graph.vs(degree_eq=1, vkind_in=("AV", "Ca"))) != 0:
+        graph.delete_vertices(graph.vs(degree_eq=1,
+                                       vkind_in=("AV", "Ca")).indices)
+        graph.vs['degree'] = graph.degree() # update degree attribute
+
+    # delete degree 0 vertices (vertices that are now completely disconnected)
+    graph.delete_vertices(graph.vs(degree_eq=0, vkind_eq="AV").indices)
+
+    del graph.vs['degree'], graph.vs['vkind']
+
+    print('Network cropped')
+
+
+def check_microbloom_attrs(graph):
+    vattrs = graph.vs.attributes()
+    assert 'coords' in vattrs
+    assert 'boundaryType' in vattrs
+    assert 'boundaryValue' in vattrs
+
+    eattrs = graph.es.attributes()
+    assert 'diameter' in eattrs
+    assert 'diameter_mcao0h' in eattrs
+    assert 'diameter_mcao1h' in eattrs
+    assert 'length' in eattrs
+
+    components = graph.components()
+    for comp in components:
+        vs = list(comp)
+        has_pressure = np.any(
+            np.isin(vs, graph.vs(boundaryType_eq=1).indices)
+        )
+        if not has_pressure:
+            print("Component without pressure BC:", vs)
+
 
