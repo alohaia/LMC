@@ -1,19 +1,17 @@
 """Base data reading, writing and conversion operations."""
 
-from typing import Literal, Union
-from numpy.typing import ArrayLike
+import pickle
 from pathlib import Path
+from typing import Literal, Union
 
-from lmc import utils
-from lmc.core import ops
-from lmc import config
-
+import meshio
 import numpy as np
 import pandas as pd
 from igraph import Graph
+from numpy.typing import ArrayLike
 
-import pickle
-import meshio
+from lmc import config, utils
+
 
 def create_from_file(
     data_xlsx: Union[Path, str] = "",
@@ -41,8 +39,8 @@ def create_from_file(
     Returns:
         `igraph.Graph` object constructed from given data.
     """
-    from time import time
     from datetime import datetime as dt
+    from time import time
 
     if data_xlsx != "":
         dfs = utils.read_xlsx(data_xlsx)
@@ -220,9 +218,9 @@ def load_penetrating_tree(
     g.es["length"] = edge_lengths
 
     # diameter (apply min_diam)
-    diameter = np.array(esdf["diameter"])
+    diameter = np.array(esdf['diameter'])
     diameter[diameter < min_diam] = min_diam
-    g.es["diameter"] = diameter
+    g.es['diameter'] = diameter
 
     # g.es["is_stroke"] = np.full(g.ecount(), fill_value=False)
     g.es["type"] = np.full(g.ecount(), fill_value=tree_type)
@@ -250,9 +248,8 @@ def write_vtk(graph, path):
             # "vertex_type": vtypes
         },
         cell_data={
-            "diameter": [np.array(graph.es["diameter"])],
-            # "edge_type": [np.searchsorted(("PA", "DA", "AV", "Cap"),
-            #                               graph.es["type"])],
+            dattr: [np.array(graph.es[dattr])]
+            for dattr in config.diameter_attrs
         }
     )
 

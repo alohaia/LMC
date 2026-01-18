@@ -3,18 +3,17 @@
 Shared low-level data, Vertices for instance, operations are implemented here.
 """
 
-from typing import Literal, Union
-
-from igraph import Graph
-from pandas.plotting import deregister_matplotlib_converters
-from shapely.ops import unary_union
-from shapely.geometry import Point, Polygon, MultiPolygon, shape
+from typing import Union
 
 import numpy as np
-from numpy.typing import NDArray
 import pandas as pd
+from igraph import Graph
+from numpy.typing import NDArray
+from shapely.geometry import MultiPolygon, Point, Polygon
+from shapely.ops import unary_union
 
-from lmc.types import *
+from lmc import config
+from lmc.types import Edges, Vertex, Vertices, VoronoiExt
 
 
 def get_vs(graph: Graph, z: bool = True) -> Vertices:
@@ -569,7 +568,6 @@ def create_stacked_hex_network(
     indices_d1d2 = (np.arange(np.size(vs_d1d2) / 2) + indices_c[-1] + 1) \
         .astype(np.intp).reshape(-1, 2)
 
-
     n_vs_x = 2 * n_cells_x
     es_123 = np.zeros((n_cells_y, n_cells_x, 3, 2), dtype=np.intp)
     es_a = np.empty((0, 2), dtype=np.intp)
@@ -701,8 +699,9 @@ def create_stacked_hex_network(
         "source": (es[:, 0] + es_vid_step).ravel(),
         "target": (es[:, 1] + es_vid_step).ravel(),
         "type": np.tile(etypes, n_layer),
-        "diameter": d_vessel,
         "length": l_vessel
+    } | {
+        dattr: d_vessel for dattr in config.diameter_attrs
     })
     # }}}
 
@@ -732,8 +731,9 @@ def create_stacked_hex_network(
             "source": connect_nodes + n_vs_layer * i_layer,
             "target": connect_nodes + n_vs_layer * (i_layer - 1),
             "type": "connect edge",
-            "diameter": d_vessel,
             "length": l_vessel
+        } | {
+            dattr: d_vessel for dattr in config.diameter_attrs
         }))
 
     es_df = pd.concat((es_df, pd.concat(es_connect_list)))

@@ -4,31 +4,22 @@
 scripts. Mainly contains functions manipulating network objects (igraph.Graph).
 """
 
-from os import EX_CONFIG
 from pathlib import Path
-from sys import breakpointhook
-from typing import Literal, get_protocol_members
+from typing import Literal
 
-from igraph.drawing.metamagic import AttributeSpecification
-import pandas as pd
 import numpy as np
-from numpy.typing import NDArray
-from pandas.core.algorithms import value_counts_arraylike
-
-from lmc import config
-from lmc.config import graph_attrs
-from lmc.types import *
-from lmc import viz
-from lmc.core import ops, io
-
 from igraph import Graph
-
+from numpy.typing import NDArray
 from scipy.spatial import KDTree
-from scipy.optimize import linear_sum_assignment
-from scipy.spatial.distance import cdist
+from shapely.lib import length
+
+from lmc import config, viz
+from lmc.config import graph_attrs
+from lmc.core import io, ops
+from lmc.types import Vertices, VoronoiExt
 
 
-def check_attrs(g: Graph) -> bool:
+def check_attrs(g: Graph, preset: str) -> bool:
     """Check consistence of Graph attributes.
 
     Args:
@@ -46,7 +37,7 @@ def check_attrs(g: Graph) -> bool:
         "edge": g.es.attributes(),
     }
 
-    target_attr = graph_attrs
+    target_attr = graph_attrs[preset]
 
     attributes_missing = []
     attributes_excessive = []
@@ -414,6 +405,7 @@ def _connect_new_DA_root_to_graph(
     edge_lengths = np.array(graph.es['length'])
     edge_types = np.array(graph.es['type'])
     edge_is_collateral = np.array(graph.es['is_collateral']) == True
+    edge_added_manually = np.array(graph.es["is_added_manually"])
     # nr of sub-points on each edge
     edge_nr_new_subpts \
          = np.floor(edge_lengths / min_dist_subpts).astype(np.int_) - 1
@@ -455,10 +447,14 @@ def _connect_new_DA_root_to_graph(
     dist_new_DA_to_all_subpts = np.linalg.norm(xy_all_subpts - xy_new_DA,
                                                axis=1)
     # exclude non-PA edges and collateral edges
-    dist_new_DA_to_all_subpts[
-        (edge_types[eids_all_subpts] != "PA")
+    try:
+        dist_new_DA_to_all_subpts[
+            (edge_types[eids_all_subpts] != "PA")
             | edge_is_collateral[eids_all_subpts]
-    ] = np.inf
+            | edge_added_manually[eids_all_subpts]
+        ] = np.inf
+    except(TypeError):
+        breakpoint()
 
     # return False if not at least one empty subpoint is found
     if np.size(dist_new_DA_to_all_subpts) < 1:
@@ -471,10 +467,10 @@ def _connect_new_DA_root_to_graph(
     xy_d = xy_all_subpts[_i_d, :]
     eid_ab = eids_all_subpts[_i_d]
     # Vertex ids and coordinates of edge ends
-    edge_vids_ab = adj_list[eid_ab, :]
+    edge_ab = adj_list[eid_ab, :]
     # coordinates of edge ends (a and b)
-    xy_a = xy[edge_vids_ab[0]]
-    xy_b = xy[edge_vids_ab[1]]
+    xy_a = xy[edge_ab[0]]
+    xy_b = xy[edge_ab[1]]
     # }}}
 
     # The new vertex on old edge is shifted, to make the network less
@@ -493,6 +489,16 @@ def _connect_new_DA_root_to_graph(
             xy_e = xy_d + vec_distort_max * delta * len_abs_db
     # }}}
 
+    # add new vertices {{{
+    # vertex E
+    graph.add_vertex(x=xy_e[0], y=xy_e[1], z=0, type="PA subpoint",
+                     is_DA_root=False, is_DA_root_added_manually=False)
+    # }}}
+
+    # add new edges {{{
+    vid_e = nr_vs_orig
+    vid_c = vid_new_DA
+
     # set diameters and lengths of new vessels {{{
     length_ce = np.linalg.norm(xy_e - xy_new_DA)
     if length_ce > max_len_new_vessel:
@@ -505,34 +511,29 @@ def _connect_new_DA_root_to_graph(
     length_eb = length_ab * \
         np.linalg.norm(xy_b - xy_e) / np.linalg.norm(xy_b - xy_a)
 
-    diameter_ab_orig = graph.es['diameter'][eid_ab]
-    diameter_ae = diameter_eb = diameter_ab_orig
-    diameter_ce = diameter_ab_orig if diameter_new_vessel < 0 \
-        else diameter_new_vessel
-    # }}}
-
-    # add new vertices {{{
-    # vertex E
-    graph.add_vertex(x=xy_e[0], y=xy_e[1], z=0, type="PA subpoint",
-                     is_DA_root=False, is_DA_root_added_manually=False)
-    # }}}
-
-    # add new edges {{{
-    vid_e = nr_vs_orig
-    vid_c = vid_new_DA
-    is_added_manually_ab = graph.es['is_added_manually'][eid_ab]
-
     # edges AE and EB
+    graph.add_edges(
+        [
+            [edge_ab[0], vid_e], # AE
+            [edge_ab[1], vid_e], # BE
+            [vid_c, vid_e]       # CE
+        ],
+        attributes={
+            'type': 'PA',
+            'length': [length_ae, length_eb, length_ce],
+            'is_added_manually': False,
+        } | {
+            dattr: [
+                graph.es[eid_ab][dattr],
+                graph.es[eid_ab][dattr],
+                graph.es[eid_ab][dattr]
+                    if diameter_new_vessel < 0 else diameter_new_vessel
+            ]
+            for dattr in config.diameter_attrs
+        }
+    )
     graph.delete_edges(eid_ab)
-    graph.add_edge(edge_vids_ab[0], vid_e,
-                   is_added_manually=is_added_manually_ab,
-                   diameter=diameter_ae, length=length_ae, type="PA")
-    graph.add_edge(edge_vids_ab[1], vid_e,
-                   is_added_manually=is_added_manually_ab,
-                    diameter=diameter_eb, length=length_eb, type="PA")
-    # CE
-    graph.add_edge(vid_c, vid_e, is_added_manually=True, diameter=diameter_ce,
-                   length=length_ce, type="PA")
+    # }}}
     # }}}
 
     return True
@@ -611,8 +612,8 @@ def _merge_sa_with_tree(
             + n_vs_pa
 
     if np.size(vid_tree_roots) > 1:
-        raise ValueError("More than 1 root point found in penetrating vessel "
-                         f"tree {graph_tree["name"]}.")
+        raise ValueError('More than 1 root point found in penetrating vessel '
+                         f'tree {graph_tree["name"]}.')
 
     vid_tree_root = vid_tree_roots[0] # reduce dimension to single value
     ## }}}
@@ -621,14 +622,14 @@ def _merge_sa_with_tree(
     graph_main.add_vertices(
         vs_tree_moved.shape[0],
         attributes={
-            "is_connected2PA": graph_tree.vs["is_connected2PA"],
-            "is_connected2PV": graph_tree.vs["is_connected2PV"],
-            "is_connected2Cap": graph_tree.vs["is_connected2Cap"],
-            "x": vs_tree_moved[:, 0],
-            "y": vs_tree_moved[:, 1],
-            "z": vs_tree_moved[:, 2],
-            "is_free_root": False,
-            "type": f"{tree_type} tree point"
+            'is_connected2PA': graph_tree.vs['is_connected2PA'],
+            'is_connected2PV': graph_tree.vs['is_connected2PV'],
+            'is_connected2Cap': graph_tree.vs['is_connected2Cap'],
+            'x': vs_tree_moved[:, 0],
+            'y': vs_tree_moved[:, 1],
+            'z': vs_tree_moved[:, 2],
+            'is_free_root': False,
+            'type': f'{tree_type} tree point'
         }
     )
     # it is connected now, set to False
@@ -638,9 +639,9 @@ def _merge_sa_with_tree(
         adj_tree + n_vs_pa,
         attributes={
         "length": graph_tree.es["length"],
-        "diameter": graph_tree.es["diameter"],
         "type": graph_tree.es["type"],
-        "is_added_manually": True
+    } | {
+        dattr: graph_tree.es["diameter"] for dattr in config.diameter_attrs
     })
 
     # connect vessel tree to PA network {{{
@@ -652,12 +653,15 @@ def _merge_sa_with_tree(
     # find eid of edge adjacent to head node, first segment of vessel tree
     eid_1st_seg = graph_main.get_eid(vid_tree_root,
                                      pt_connected_to_tree_root[0])
-    graph_main.add_edge(
-        vid_pa_free_root, pt_connected_to_tree_root[0],
-        length=graph_main.es['length'][eid_1st_seg],
-        diameter=graph_main.es['diameter'][eid_1st_seg],
-        type=graph_main.es['type'][eid_1st_seg],
-        is_added_manually=True
+    graph_main.add_edges(
+        [[vid_pa_free_root, pt_connected_to_tree_root[0]]],
+        attributes={
+            'length': graph_main.es['length'][eid_1st_seg],
+            'type': graph_main.es['type'][eid_1st_seg]
+        } | {
+            dattr: graph_main.es['diameter'][eid_1st_seg]
+            for dattr in config.diameter_attrs
+        }
     )  # add edge from PA to tree-neighbour of head node
 
     graph_main.delete_edges(eid_1st_seg)  # delete remaining edge
@@ -700,7 +704,7 @@ def add_capillary_bed(
 
 
 def _merge_with_capbed(g_main: Graph, g_capbed:Graph) -> None:
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     n_vs_main_orig = g_main.vcount()
     g_main.add_vertices(
@@ -740,15 +744,17 @@ def _merge_with_capbed(g_main: Graph, g_capbed:Graph) -> None:
     # g_main.add_edges(
     #     es=es_leaf2endpts,
     #     attributes={
-    #         "diameter": np.array(g_main.es["diameter"])[eid_closest_caps],
     #         "length": np.array(g_main.es["length"])[eid_closest_caps],
     #         "type": "Cap",
-    #         "is_added_manually": True
+    #     } | {
+    #         # "diameter": np.array(g_main.es["diameter"])[eid_closest_caps],
+    #         # config.diameter_attrs
     #     }
     # )
     # g_main.delete_edges(np.unique(eid_closest_caps))
 
     # method 3: update network after connecting each leaf point
+    _leaf_number_len = len(str(leafs.shape[0]))
     for i_leaf in range(leafs.shape[0]):
 
         vid_leaf = vid_leafs[i_leaf]
@@ -758,118 +764,34 @@ def _merge_with_capbed(g_main: Graph, g_capbed:Graph) -> None:
         dists = np.linalg.norm(caps_midpts - leafs[i_leaf], axis=1)
         e_closest_caps = g_main.es[eid_caps[np.argmin(dists)]]
 
-        # breakpoint()
-
         g_main.add_edges(
             es=np.array([
                 [vid_leaf, e_closest_caps.source],
                 [vid_leaf, e_closest_caps.target],
             ]),
             attributes={
-                "diameter": e_closest_caps["diameter"],
                 "length": e_closest_caps["length"],
                 "type": "Cap",
-                "is_added_manually": True
+            } | {
+                dattr: e_closest_caps["diameter"] for dattr in config.diameter_attrs
             }
         )
 
         if i_leaf % 100 == 0:
-            timestmp = datetime.now(timezone.utc) \
-                .strftime("%Y-%m-%d %H:%M:%S UTC")
+            timestamp = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
             print(
-                f'[{timestmp}] Connecting leafs: '
-                f'{i_leaf}\t/ {leafs.shape[0]} completed: '
-                f'leaf({vid_leaf})to '
+                f'[{timestamp}] Connecting leafs: '
+                f'{i_leaf:>{_leaf_number_len}d} / {leafs.shape[0]} completed: '
+                f'leaf({vid_leaf}) to '
                 f'edge({eid_caps[np.argmin(dists)]}: '
-                f'{e_closest_caps.source}->{e_closest_caps.target})\n...'
+                f'{e_closest_caps.source}->{e_closest_caps.target}) ...'
             )
-            # breakpoint()
 
 
 def remove_redundant_vessels(graph: Graph) -> None:
+    # TODO:
+    # 1. Closure
     pass
-
-    # from scipy.sparse import lil_matrix
-    # from scipy.sparse.linalg import spsolve
-    #
-    # # # vkind is type for vertices
-    # # vkind = np.array(graph.vs["type"]).astype("<U2")
-    # # # exclude AV/DA roots
-    # # vkind[np.isin(graph.vs["type"], ("AV root", "DA root",
-    # #                                  "DA root added manually"))] = ""
-    # # graph.vs["vkind"] = vkind
-    #
-    #
-    # # arguments
-    # P_DA_root = 100.0
-    # P_AV_root = 0.0
-    # mu = 1.0 # just relative values
-    #
-    # vs_model = graph.vs(type_in=("DA root", "DA root added manually",
-    #                              "DA tree point", "Cap point",
-    #                              "AV tree point", "AV root"))
-    # es_model = graph.es(type_in=("DA", "AV", "Ca"))
-    # L = lil_matrix((len(vs_model), len(vs_model)))
-    # for e in es_model:
-    #     i, j = e.source, e.target
-    #     r = e["diameter"]
-    #     l = e["length"]
-    #     # G = Q / ΔP
-    #     G = np.pi * r**4 / (8 * mu * l)
-    #     L[i, i] += G
-    #     L[j, j] += G
-    #     L[i, j] -= G
-    #     L[j, i] -= G
-    #
-    # fixed = {}
-    # for v in vs_model():
-    #     if v["type"] in ("DA root", "DA root added manually"):
-    #         fixed[v.index] = P_DA_root
-    #     elif v["type"] == "AV root":
-    #         fixed[v.index] = P_AV_root
-    # fixed_idx = np.array(list(fixed.keys()))
-    #
-    # free = np.array([i for i in range(len(vs_model)) if i not in fixed])
-    #
-    # L = L.tocsr()
-    # L_ff = L[free][:, free]
-    # b_f = np.zeros(len(free))
-    # for k, Pk in fixed.items():
-    #     b_f -= L[free, k].toarray().ravel() * Pk
-    #
-    # P_free = spsolve(L_ff, b_f)
-    #
-    # P = np.zeros(len(vs_model))
-    # P[free] = P_free
-    # for k, Pk in fixed.items():
-    #     P[k] = Pk
-
-
-    # art_vs = graph.vs.select(vkind="DA")
-    # cap_vs = graph.vs.select(vkind="Ca")
-    # ven_vs = graph.vs.select(vkind="AV")
-    #
-    # dist_from_art = graph.shortest_paths(
-    #     source=art_vs,
-    #     target=cap_vs
-    # )
-    # dist_to_ven = graph.shortest_paths(
-    #     source=ven_vs,
-    #     target=cap_vs
-    # )
-    # d_art = np.min(dist_from_art, axis=0)
-    # d_ven = np.min(dist_to_ven, axis=0)
-    #
-    # breakpoint()
-    #
-    # valid_cap = cap_vs[
-    #     (d_art < np.inf) &
-    #     (d_ven < np.inf) &
-    #     (d_art + d_ven <= 30)
-    # ]
-    #
-    # graph.delete_vertices(set(cap_vs.indices) - set(valid_cap.indices))
-
 
 
 def remove_regions_outside_DAs(
@@ -905,8 +827,6 @@ def remove_regions_outside_DAs(
     vid_far_AVs = vid_AVs[dist_AVs2closestDA > max_distance_to_da]
     graph.delete_vertices(vid_far_AVs)
 
-    # breakpoint()
-    #
     # tree_ = KDTree(vs_all[np.isin(vkind, ("DA", "AV"))])
     # dist_AVs2closestDA, _ = tree_DAs.query(vs_all[vkind == "Ca"])
     # # delete all AVs which are beyond certain distance to DAs
@@ -937,12 +857,13 @@ def check_microbloom_attrs(graph):
     assert 'boundaryValue' in vattrs
 
     eattrs = graph.es.attributes()
-    assert 'diameter' in eattrs
-    assert 'diameter_mcao0h' in eattrs
-    assert 'diameter_mcao1h' in eattrs
+    for dattr in config.diameter_attrs:
+        assert dattr in eattrs
     assert 'length' in eattrs
 
     components = graph.components()
+    if len(components) > 1:
+        print(f'{len(components)} components detected.')
     for comp in components:
         vs = list(comp)
         has_pressure = np.any(
@@ -950,5 +871,6 @@ def check_microbloom_attrs(graph):
         )
         if not has_pressure:
             print("Component without pressure BC:", vs)
+
 
 
