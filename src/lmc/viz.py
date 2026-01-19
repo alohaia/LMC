@@ -18,6 +18,27 @@ from lmc.core import ops, io
 from lmc.types import *
 from lmc.config import palette
 
+def plot_sa(graph_sa: Graph) -> tuple[Figure, Axes]:
+    fig, ax = plt.subplots(1, 1, figsize=(8, 8))
+    vs_sa = ops.get_vs(graph_sa, z=False)
+    ax.add_collection(LineCollection(
+        vs_sa[[(e.source, e.target) for e in graph_sa.es(origin='MCA')]].tolist(),
+        colors="red", linewidths=4
+    ))
+    for v in graph_sa.vs(type_in=('DA root', 'DA root added manually')):
+        ax.text(v['x'], v['y'], f'{v.index}|{v['name']:.0f}', fontsize=6, color='black')
+    for v in graph_sa.vs(type_in=('PA point')):
+        ax.text(v['x'], v['y'], f'{v.index}|{v['name']:.0f}', fontsize=4, color='gray')
+    ax.add_collection(LineCollection(
+        vs_sa[[(e.source, e.target) for e in graph_sa.es(origin='ACA')]].tolist(),
+        colors="blue", linewidths=4
+    ))
+    ax.autoscale()
+    ax.set_aspect("equal", adjustable="box")
+    ax.invert_yaxis()
+
+    return fig, ax
+
 def plot_graph(g: Graph) -> tuple[Figure, Axes]:
     """Visualize a graph."""
     fig, ax = plt.subplots(1, 1, figsize=(8, 8))

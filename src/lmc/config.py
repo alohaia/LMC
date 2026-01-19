@@ -14,8 +14,9 @@ mice = [
     '08_norEVs', '09_norEVs', '02_norEVs',
     '01_hypEVs', '07_hypEVs', '11_hypEVs'
 ]
-# mice = ['08_norEVs']
+# mice = ['02_norEVs']
 diameter_attrs = ['diameter', 'diameter_mcao0h', 'diameter_mcao1h']
+conditions = ["baseline", "MCAO0h", "MCAO1h"]
 is_cow_added = True
 
 graph_attrs = {

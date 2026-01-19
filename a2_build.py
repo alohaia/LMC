@@ -110,15 +110,12 @@ for mouse in config.mice:
     # mmHg -> Pa
     graph.vs(type='AV root')['boundaryValue'] = 10 * 133.322
     graph.vs(type=('CoW in'))['boundaryValue'] = 100 * 133.322
-    #########################################################################
-    # XXXXXXXXXX micrometer -> meter XXXXXXXXXX                             #
-    # DO ONT convert, or system_matrix will be not able to be solved.       #
-    # See length_scale.py for understading final values.                    #
-    #########################################################################
+    # micrometer -> meter
     graph.vs['coords'] = \
-        np.array((graph.vs['x'], graph.vs['y'], graph.vs['z'])).T
-    # graph.es[_diameter_attr] = np.array(graph.es[_diameter_attr]) * 10e-6
-    # graph.es['length'] = np.array(graph.es['length']) * 10e-6
+        np.array((graph.vs['x'], graph.vs['y'], graph.vs['z'])).T * 10e-6
+    graph.es['length'] = np.array(graph.es['length']) * 10e-6
+    for dattr in config.diameter_attrs:
+        graph.es[dattr] = np.array(graph.es[dattr]) * 10e-6
 
     # 7. Save final results
     print(f'=> "{mouse}"\tSave final results...')

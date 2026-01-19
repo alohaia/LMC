@@ -784,7 +784,7 @@ def _merge_with_capbed(g_main: Graph, g_capbed:Graph) -> None:
                 f'{i_leaf:>{_leaf_number_len}d} / {leafs.shape[0]} completed: '
                 f'leaf({vid_leaf}) to '
                 f'edge({eid_caps[np.argmin(dists)]}: '
-                f'{e_closest_caps.source}->{e_closest_caps.target}) ...'
+                f'{e_closest_caps.source}->{e_closest_caps.target})...'
             )
 
 
